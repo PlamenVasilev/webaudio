@@ -1,0 +1,325 @@
+<html>
+<head>
+	<style>
+		.rotated{ transform: rotate(270deg); margin-top: 80px;
+			margin-left: -60px;
+			margin-right: -60px;}
+	</style>
+</head>
+<meta charset="utf-8">
+<body>
+
+<button id="play">Play</button>
+<button id="pause">Pause</button>
+<button id="stop">Stop</button>
+
+<br />
+Volume: <input id="mainVolume" min="0" max="1" step="0.01" value="1" type="range">
+
+<br />
+Volume left: <input id="leftVolume" min="0" max="1" step="0.01" value="1" type="range">
+
+<br>
+Volume right: <input id="rightVolume" min="0" max="1" step="0.01" value="1" type="range">
+<br />
+
+Progress: <input id="progress" min="" max="" step="1" value="0" type="range" style="width: 400px;">
+
+<br />
+<div style="border: 1px solid red; height: 180px; width: 460px; display: inline-block; margin-top:10px;">
+	<input rel="1" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+	<input rel="2" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+	<input rel="3" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+	<input rel="4" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+	<input rel="5" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+	<input rel="6" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+	<input rel="7" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+	<input rel="8" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+	<input rel="9" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+	<input rel="10" min="-20" max="20" value="0" type="range" class="equalizer rotated">
+</div>
+
+<div style="margin-top:10px;">
+	<canvas class="visualizer-wave" width="460" height="100" style="border: 1px solid red;"></canvas>
+</div>
+
+<div style="margin-top:10px;">
+	<canvas class="visualizer-bars" width="460" height="100" style="border: 1px solid red;"></canvas>
+</div>
+
+<div style="border: 1px solid red;  width: 460px; display: inline-block; margin-top:10px;">
+	<div id="waveform-peaks"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peaks.js/0.9.14/peaks.js"></script>
+
+<script>
+	VPlayer = function(root){
+		'use strict';
+		this.context = new (window.AudioContext || window.webkitAudioContext)();
+
+		// Load audio file
+		this.load = function(audioFile){
+			this.audio = new Audio(audioFile);
+
+			// https://waveform.prototyping.bbc.co.uk/ example
+			var p = peaks.init({
+				container: document.querySelector('#waveform-peaks'),
+                mediaElement: this.audio,
+				audioContext: this.context,
+                height: 100,
+                overviewHighlightRectangleColor: 'transparent',
+                overviewWaveformColor: 'rgba(0,0,0,0.8)',
+            });
+            p.on('peaks.ready', function() {
+                // do something when the waveform is displayed and ready
+                for( var el of document.getElementsByClassName('zoom-container')){
+                    el.remove()
+				}
+            });
+
+			// events
+			this.audio.addEventListener('timeupdate', function(){
+				document.querySelector('#progress').value = this.audio.currentTime;
+			}.bind(this));
+
+			this.audio.addEventListener('loadedmetadata',function(){
+				this.duration = this.audio.duration;
+			}.bind(this),false);
+
+			// add source
+			this.source = this.context.createMediaElementSource(this.audio);
+
+			// create main gain
+			let lastNode = this.masterGain = this.context.createGain();
+
+			// attach to output
+			this.masterGain.connect(this.context.destination);
+
+			// attach stereo effect
+			lastNode = this.attachStereoGain(lastNode);
+
+			// attach equalizer
+			lastNode = this.attachEqualizer(lastNode);
+
+			// attach to the source file
+			this.source.connect(lastNode);
+
+			// draw
+            var analyser = this.context.createAnalyser();
+            var distortion = this.context.createWaveShaper();
+            this.source.connect(analyser);
+            analyser.connect(distortion);
+            distortion.connect(this.context.destination);
+            analyser.fftSize = 512;
+            var bufferLength = analyser.fftSize;
+            var dataArray = new Uint8Array(bufferLength);
+
+            var drawBars = function() {
+                var canvas = document.querySelector('.visualizer-bars');
+                var canvasCtx = canvas.getContext("2d");
+
+                const WIDTH = canvas.width;
+                const HEIGHT = canvas.height;
+
+                analyser.fftSize = 512;
+                var bufferLengthAlt = analyser.frequencyBinCount;
+                console.log(bufferLengthAlt);
+                var dataArrayAlt = new Uint8Array(bufferLengthAlt);
+
+                canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+
+                var drawAlt = function() {
+                    var drawVisual = requestAnimationFrame(drawAlt);
+
+                    analyser.getByteFrequencyData(dataArrayAlt);
+
+                    canvasCtx.fillStyle = 'rgb(0, 0, 0)';
+                    canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+
+                    var barWidth = (WIDTH / bufferLengthAlt) * 2.5;
+                    var barHeight;
+                    var x = 0;
+
+                    for(var i = 0; i < bufferLengthAlt; i++) {
+                        barHeight = dataArrayAlt[i];
+
+                        canvasCtx.fillStyle = 'rgb(' + (barHeight+100) + ',50,50)';
+                        canvasCtx.fillRect(x,HEIGHT-barHeight/2,barWidth,barHeight/2);
+
+                        x += barWidth + 1;
+                    }
+                };
+
+                drawAlt();
+            }
+
+            var drawWave = function() {
+                var canvas = document.querySelector('.visualizer-wave');
+                var canvasCtx = canvas.getContext("2d");
+
+                const WIDTH = canvas.width;
+                const HEIGHT = canvas.height;
+
+                canvasCtx.clearRect(0, 0, WIDTH, HEIGHT);
+
+                var drawVisual = requestAnimationFrame(drawWave);
+                analyser.getByteTimeDomainData(dataArray);
+
+                canvasCtx.fillStyle = 'rgb(200, 200, 200)';
+                canvasCtx.fillRect(0, 0, WIDTH, HEIGHT);
+
+                canvasCtx.lineWidth = 2;
+                canvasCtx.strokeStyle = 'rgb(0, 0, 0)';
+                canvasCtx.beginPath();
+
+                var sliceWidth = WIDTH * 1.0 / bufferLength;
+                var x = 0;
+
+                for(var i = 0; i < bufferLength; i++) {
+
+                    var v = dataArray[i] / 128.0;
+                    var y = v * HEIGHT/2;
+
+                    if(i === 0) {
+                        canvasCtx.moveTo(x, y);
+                    } else {
+                        canvasCtx.lineTo(x, y);
+                    }
+
+                    x += sliceWidth;
+                }
+
+                canvasCtx.lineTo(canvas.width, canvas.height/2);
+                canvasCtx.stroke();
+            }
+
+            drawBars();
+            drawWave();
+		};
+
+		// play audio file
+		this.play = function(){
+			document.querySelector('#progress').min = 0;
+			document.querySelector('#progress').max = this.duration;
+
+			this.audio.play().then(function(){
+
+			});
+		};
+
+		// pause audio file
+		this.pause = function(){
+			this.audio.pause();
+		};
+
+		// stop audio file
+		this.stop = function(){
+			this.audio.pause();
+			this.audio.currentTime = 0;
+		};
+
+		this.changeMainVolume = function(value){
+			this.masterGain.gain.value = value;
+		};
+
+		this.changeLeftVollume = function(value){
+			this.leftGainNode.gain.value = value;
+		};
+
+		this.changeRightVolume = function(value){
+			this.rightGainNode.gain.value = value;
+		};
+
+		this.attachStereoGain = function(inputNode){
+			// create splitter
+			this.splitter = this.context.createChannelSplitter(2);
+
+			// Connect source to the splitter
+			//this.source.connect(this.splitter);
+
+			// create merger
+			this.merger = this.context.createChannelMerger(2);
+
+			// Reduce the volume of the left channel only
+			this.leftGainNode = this.context.createGain();
+			this.splitter.connect(this.leftGainNode, 0);
+			this.leftGainNode.connect(this.merger, 0, 0);
+
+			this.rightGainNode = this.context.createGain();
+			this.splitter.connect(this.rightGainNode, 1);
+			this.rightGainNode.connect(this.merger, 0, 1);
+
+			this.merger.connect(inputNode);
+
+			return this.splitter;
+		}
+
+		this.attachEqualizer = function(inputNode){
+			let frequencies = [32,64,125,250,500,1000,2000,4000,8000,16000];
+
+			this.equalizerNodes = [];
+			for(let i = 0; i<frequencies.length; i++){
+				let filter = this.context.createBiquadFilter();
+				filter.type = "peaking";
+				filter.frequency.value = frequencies[i];
+				this.equalizerNodes.push(filter);
+			}
+			this.equalizerNodes[0].connect(inputNode);
+
+			for(let v = 1; v < this.equalizerNodes.length; v++){
+				this.equalizerNodes[v].connect(this.equalizerNodes[v-1]);
+			}
+
+			return this.equalizerNodes[this.equalizerNodes.length-1];
+		};
+
+		this.changeEqualizerNode = function(index, gain){
+			this.equalizerNodes[index-1].gain.value = gain;
+		};
+
+		this.seekPossition = function(possition){
+			this.audio.pause();
+			this.audio.currentTime = possition;
+			this.audio.play();
+		}
+	};
+
+	let player = new VPlayer();
+	player.load('test.mp3');
+
+	document.querySelector('#play').onclick = () => player.play();
+	document.querySelector('#pause').onclick = () => player.pause();
+	document.querySelector('#stop').onclick = () => player.stop();
+
+	document.querySelector('#mainVolume').value = 1;
+	document.querySelector('#mainVolume').oninput = function(){
+		player.changeMainVolume(this.value);
+	};
+
+	document.querySelector('#leftVolume').value = 1;
+	document.querySelector('#leftVolume').oninput = function(){
+		player.changeLeftVollume(this.value);
+	};
+
+	document.querySelector('#rightVolume').value = 1;
+	document.querySelector('#rightVolume').oninput = function(){
+		player.changeRightVolume(this.value);
+	};
+
+	document.querySelector('#progress').value = 0;
+	document.querySelector('#progress').oninput = function(){
+		player.seekPossition(this.value);
+	};
+
+	document.querySelectorAll('.equalizer').forEach(function(element){
+		element.value = 0;
+		element.oninput = function(){
+			player.changeEqualizerNode(this.attributes.rel.value, this.value);
+		};
+	});
+
+</script>
+
+</body>
+</html>
